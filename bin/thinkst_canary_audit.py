@@ -71,14 +71,16 @@ class Input(Script):
             ew.log(EventWriter.WARN,"No Checkpoint found")
             lastid = 0
 
-        ew.log(EventWriter.INFO,f"Last ID is {lastid}")
+        ew.log(EventWriter.DEBUG,f"Last ID is {lastid}")
 
         cursor = None
         count = 0
         params = {}
 
+        # Create a persistant session and set headers including Auth Token
         with requests.Session() as session:
             session.headers.update({'Accept': 'application/json', 'X-Canary-Auth-Token': input_items["auth_token"]})
+            
             while True:
                 if(cursor):
                     params["cursor"] = cursor
@@ -88,10 +90,12 @@ class Input(Script):
                     respdata = response.json()
                     events = respdata["audit_trail"]
                     if not cursor:
+                        # First event we receive is the most recent, so record its ID as the checkpoint for next time
                         open(checkpointfile, "w").write(str(events[0]["id"]))
                     cursor = respdata["cursor"]["next"]
                     for event in events:
                         if event["id"] <= lastid:
+                            # Found an event we have already indexed, stop here
                             cursor = None
                             break
                         ew.write_event(Event(
@@ -103,6 +107,7 @@ class Input(Script):
                         count += 1
                     
                     if not cursor:
+                        # No more data, so stop looping
                         break
                     
                 else:
