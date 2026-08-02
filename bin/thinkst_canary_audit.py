@@ -5,7 +5,7 @@ import dateutil.parser
 import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
-from splunklib.modularinput import *
+from splunk_input_runtime.modularinput import Argument, Event, EventWriter, Scheme, Script
 
 
 class Input(Script):
@@ -37,7 +37,6 @@ class Input(Script):
         return scheme
 
     def stream_events(self, inputs, ew):
-        self.service.namespace['app'] = self.APP
         # Get Variables
         input_name, input_items = inputs.inputs.popitem()
         kind, name = input_name.split("://")
@@ -45,25 +44,15 @@ class Input(Script):
         base = 'https://'+input_items["domain"]+'/api/v1/audit_trail/fetch'
 
         # Password Encryption
-        updates = {}
+        secrets = self.context.credentials.protect_input_fields(
+            kind=kind,
+            stanza=name,
+            values=input_items,
+            fields=("auth_token",),
+            placeholder=self.MASK,
+        )
+        input_items["auth_token"] = secrets["auth_token"]
 
-        for item in ["auth_token"]:
-            stored_password = [x for x in self.service.storage_passwords if x.username == item and x.realm == name]
-            if input_items[item] == self.MASK:
-                if len(stored_password) != 1:
-                    ew.log(EventWriter.ERROR,f"Encrypted {item} was not found for {input_name}, reconfigure its value.")
-                    return
-                input_items[item] = stored_password[0].content.clear_password
-            else:
-                if(stored_password):
-                    ew.log(EventWriter.DEBUG,"Removing Current password")
-                    self.service.storage_passwords.delete(username=item,realm=name)
-                ew.log(EventWriter.DEBUG,"Storing password and updating Input")
-                self.service.storage_passwords.create(input_items[item],item,name)
-                updates[item] = self.MASK
-        if(updates):
-            self.service.inputs.__getitem__((name,kind)).update(**updates)
-        
         # Checkpoint
         try:
             lastid = int(open(checkpointfile, "r").read()) or 0
@@ -113,7 +102,6 @@ class Input(Script):
                 else:
                     ew.log(EventWriter.ERROR,f"Request returned status {response.status_code}, {response.text}")
                     break
-        ew.close()
         ew.log(EventWriter.INFO,f"Wrote {count} events")
 
 if __name__ == '__main__':
